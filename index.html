@@ -287,7 +287,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .sgrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .sgrid .full { grid-column: 1 / -1; }
 @media (max-width: 480px) { .sgrid { grid-template-columns: minmax(0, 1fr); } }
-.kind-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.kind-tabs { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .field input[type="file"] { padding: 10px; font-size: 13px; }
 .team-card { padding: 12px 14px; border-radius: 18px; background: var(--surface); border: 1.5px solid var(--line); display: flex; flex-direction: column; gap: 10px; }
 .tm { display: flex; gap: 10px; align-items: flex-start; }
@@ -498,6 +498,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
         <div class="modes kind-tabs" role="group" aria-label="Project type">
           <button type="button" data-stype="avatars" aria-pressed="true">Game avatars</button>
           <button type="button" data-stype="video" aria-pressed="false">Video edit</button>
+          <button type="button" data-stype="model" aria-pressed="false">3D model</button>
         </div>
         <div class="field">
           <label for="sf-text">What should the team make?</label>
@@ -571,7 +572,28 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
             <p class="hint">The team writes the script and HeyGen records it with the avatar chosen in your HeyGen friend’s settings. Uses HeyGen API credits and usually takes 5–15 minutes.</p>
           </div>
         </div>
-        <div class="field">
+        <div id="sf-model" class="sgrid" hidden>
+          <div class="field full">
+            <label for="sf-model-pic">Picture of your character</label>
+            <input id="sf-model-pic" type="file" accept="image/*">
+            <p class="hint">A full-body front view works best: head to feet, arms a little away from the body.</p>
+          </div>
+          <div class="field full">
+            <label for="sf-m3d">What to make</label>
+            <select id="sf-m3d">
+              <option value="model">3D model</option>
+              <option value="rig" selected>3D model + skeleton (walk and run included)</option>
+              <option value="anim">3D model + skeleton + an animation</option>
+            </select>
+            <p class="hint" id="sf-m3d-hint">Uses your Meshy credits.</p>
+          </div>
+          <div class="field full" id="sf-manim-wrap">
+            <label for="sf-manim">Animation</label>
+            <input id="sf-manim" type="text" maxlength="40" value="Idle" placeholder="Idle, wave, dance, jump…">
+          </div>
+          <label class="check full" id="sf-cleanup-wrap"><input id="sf-cleanup" type="checkbox" checked> Have a painter redraw it as a sharp, clean front view first</label>
+        </div>
+        <div class="field" id="sf-rounds-wrap">
           <label for="sf-rounds">Review rounds</label>
           <select id="sf-rounds"><option value="1">1 · quick</option><option value="2" selected>2 · balanced</option><option value="3">3 · most polished</option></select>
         </div>
@@ -1610,7 +1632,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
       i.src = src;
     });
   }
-  async function imageFileToPart(file, max) {
+  async function imageFileToPart(file, max, type) {
     var url = URL.createObjectURL(file);
     try {
       var img = await loadImage(url);
@@ -1619,7 +1641,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
       c.width = Math.max(2, Math.round((img.naturalWidth || max) * s));
       c.height = Math.max(2, Math.round((img.naturalHeight || max) * s));
       c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
-      return dataUrlParts(c.toDataURL('image/jpeg', 0.85));
+      return dataUrlParts(c.toDataURL(type || 'image/jpeg', 0.85));
     } finally { URL.revokeObjectURL(url); }
   }
   function svgDataUrl(svg) { return 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svg))); }
@@ -2606,6 +2628,34 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
     setStage('final', null, undefined, 'done');
   }
 
+  // ----- 3D model from your own picture -----
+  async function runModel(b) {
+    var team = readyFriends(), lead = leadOf(team);
+    var mesh = toolFriend('meshy');
+    if (!mesh) throw studioErr('Add a Meshy friend first.');
+    var painter = b.cleanup ? (team.filter(function (f) { return capsOf(f).paint; })[0] || null) : null;
+    var pic = await imageFileToPart(b.modelPic, 1536, 'image/png');
+    var picUrl = 'data:' + pic.mime + ';base64,' + pic.b64;
+    sysLog('Loaded your picture.', [picUrl]);
+    var name = String(b.text.split(/[,.;:\n]| - | – /)[0] || 'Character').trim().slice(0, 40) || 'Character';
+    var it = { name: name, sheet: { look: b.text }, painted: picUrl };
+    setStage('3d-ref', painter ? 'Redraw a clean full-body view' : 'Use your picture', painter || null, painter ? 'waiting' : 'done');
+    setStage('3d-model', 'Build the 3D model', mesh, 'waiting');
+    if (b.m3d === 'rig' || b.m3d === 'anim') setStage('3d-rig', 'Add a skeleton', mesh, 'waiting');
+    if (b.m3d === 'anim') setStage('3d-anim', 'Animate: ' + b.manim, mesh, 'waiting');
+    setStage('3d-check', 'Check the 3D model', lead, 'waiting');
+    setStage('final', 'Deliver the 3D model', lead, 'waiting');
+    var res = await make3D({ want3d: b.m3d, anim: b.manim }, it, mesh, painter, lead, pic);
+    setStage('final', null, undefined, 'working');
+    var parts = res.files.map(function (f) { return f.label; }).join(', ');
+    studio.summary = await studioAsk(lead, 'Lead: deliver the 3D model',
+      'Meshy finished a 3D model of ' + name + ' (' + b.text.slice(0, 300) + '). Files: ' + parts + '. Write a short, warm delivery note to ' + userName() +
+      ' (2 or 3 sentences, plain text) about what the team made and what the files are for.', { tier: 'quick' });
+    studio.results = [res];
+    studio.resultsVer++;
+    setStage('final', null, undefined, 'done');
+  }
+
   // ----- Studio flow -----
   function readBrief() {
     return {
@@ -2625,7 +2675,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
       talk: !!toolFriend('heygen') && $('sf-talk').checked,
       talkLine: $('sf-talk-line').value.trim(),
       presenter: !!toolFriend('heygen') && $('sf-presenter').checked,
-      presenterNotes: $('sf-presenter-notes').value.trim()
+      presenterNotes: $('sf-presenter-notes').value.trim(),
+      modelPic: ($('sf-model-pic').files || [])[0] || null,
+      m3d: $('sf-m3d').value,
+      manim: $('sf-manim').value.trim() || 'Idle',
+      cleanup: $('sf-cleanup').checked
     };
   }
 
@@ -2635,18 +2689,20 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
     var b = readBrief();
     var problem = !readyFriends().length
       ? (RUNTIME === 'artifact' ? 'Your friends can’t work in this view. Open the page in the Claude app or on claude.ai.' : 'Set up at least one friend first. Tap a friend in the chat to add their API key.')
-      : !b.text ? 'Describe what the team should make.'
+      : (b.type === 'model' && !toolFriend('meshy')) ? 'Add a Meshy friend first. Invite a friend and choose Meshy as its brain.'
+      : (b.type === 'model' && !b.modelPic) ? 'Add a picture of your character.'
+      : !b.text ? (b.type === 'model' ? 'Give your character a name and a short description.' : 'Describe what the team should make.')
       : (b.type === 'video' && !b.clips.length && !b.presenter) ? 'Add at least one video clip, or turn on the presenter clip.' : '';
     if (problem) { studio.msg = problem; renderStudio(); return; }
     studio.running = true;
     studio.ctl = new AbortController();
     studio.stages = []; studio.log = []; studio.results = []; studio.resultsVer++; studio.summary = ''; studio.msg = '';
-    studio.title = (b.type === 'avatars' ? 'Game avatars: ' : 'Video edit: ') + b.text.slice(0, 60) + (b.text.length > 60 ? '…' : '');
+    studio.title = ({ avatars: 'Game avatars: ', video: 'Video edit: ', model: '3D model: ' }[b.type] || '') + b.text.slice(0, 60) + (b.text.length > 60 ? '…' : '');
     push({ role: 'note', text: 'Studio project started · ' + studio.title });
     renderStudio();
     var ok = false;
     try {
-      if (b.type === 'avatars') await runAvatars(b); else await runVideo(b);
+      if (b.type === 'avatars') await runAvatars(b); else if (b.type === 'model') await runModel(b); else await runVideo(b);
       ok = true;
     } catch (e) {
       var cancelled = !!(e && e.cancelled);
@@ -2736,8 +2792,15 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
     });
     $('sf-avatars').hidden = studio.type !== 'avatars';
     $('sf-video').hidden = studio.type !== 'video';
+    $('sf-model').hidden = studio.type !== 'model';
+    $('sf-rounds-wrap').hidden = studio.type === 'model';
+    $('sf-manim-wrap').hidden = $('sf-m3d').value !== 'anim';
+    $('sf-cleanup-wrap').hidden = !readyFriends().some(function (f) { return capsOf(f).paint; });
+    $('sf-m3d-hint').textContent = toolFriend('meshy') ? 'Uses your Meshy credits.' : 'Add a Meshy friend first: invite a friend and choose Meshy as its brain.';
+    document.querySelector('label[for="sf-text"]').textContent = studio.type === 'model' ? 'Name and short description' : 'What should the team make?';
     $('sf-text').placeholder = studio.type === 'avatars'
       ? 'Four space explorers for my mobile game, each with a different job on the ship'
+      : studio.type === 'model' ? 'CrustFund Robot Worker, a cute, round pizza-shop helper robot'
       : 'Turn my beach day clips into a fun, upbeat reel';
     var hasMesh = !!toolFriend('meshy'), hasHg = !!toolFriend('heygen');
     $('sf-3d-wrap').hidden = !hasMesh;
@@ -3146,7 +3209,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   });
 
   window.addEventListener('resize', updateLayout);
-  ['sf-3d', 'sf-talk', 'sf-presenter'].forEach(function (id) { $(id).addEventListener('change', renderStudio); });
+  ['sf-3d', 'sf-talk', 'sf-presenter', 'sf-m3d'].forEach(function (id) { $(id).addEventListener('change', renderStudio); });
   $('ed-name').addEventListener('input', renderEditorBits);
   $('ed-provider').addEventListener('change', renderEditorBits);
   $('ed-remember').addEventListener('change', renderEditorBits);
