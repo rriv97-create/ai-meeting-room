@@ -780,7 +780,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
     meshy: { label: 'Meshy (3D models)', short: 'Meshy', tool: true },
     heygen: { label: 'HeyGen (avatar videos)', short: 'HeyGen', tool: true }
   };
-  var DEFAULT_PROXY = '';
+  var DEFAULT_PROXY = RUNTIME === 'local' && location.origin === 'https://rriv97-create.github.io' ? 'https://ai-meeting-room-proxy.r-riv97.workers.dev' : '';
   function isTool(f) { return !!(f && PROVIDERS[f.provider] && PROVIDERS[f.provider].tool); }
   var MODE_HELP = {
     free: 'Everyone hears you and jumps in if they have something to add.',
