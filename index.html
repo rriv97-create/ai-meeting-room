@@ -1517,8 +1517,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   function sanitizeSVG(text) {
     var m = /<svg[\s\S]*<\/svg>/i.exec(String(text || ''));
     if (!m) return null;
+    var src = m[0].replace(/&(?!(?:[a-zA-Z][a-zA-Z0-9]*|#[0-9]+|#x[0-9a-fA-F]+);)/g, '&amp;');
     var doc;
-    try { doc = new DOMParser().parseFromString(m[0], 'image/svg+xml'); } catch (e) { return null; }
+    try { doc = new DOMParser().parseFromString(src, 'image/svg+xml'); } catch (e) { return null; }
     var root = doc && doc.documentElement;
     if (!root || root.nodeName.toLowerCase() !== 'svg' || doc.getElementsByTagName('parsererror').length) return null;
     Array.prototype.slice.call(root.querySelectorAll('script, foreignObject, iframe, image, audio, video, object, embed')).forEach(function (n) { n.parentNode.removeChild(n); });
@@ -1721,22 +1722,34 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
       var prompt = 'Draw this game avatar as ONE self-contained SVG.\nCharacter sheet: ' + JSON.stringify(it.sheet) + '\nArt direction: ' + direction +
         (b.style ? '\nStyle: ' + b.style : '') +
         (changes ? '\nYour previous SVG:\n' + String(it.svg || '').slice(0, 14000) + '\nApply these changes from the team review: ' + changes : '') +
-        '\nRules: viewBox="0 0 512 512"; a head-and-shoulders game character portrait centred on a simple background shape; bold clean shapes, smooth curves, soft shading with gradients where useful; no text, no <image>, no scripts, no external links; under 14 KB. Reply with only the SVG code.';
-      var box = {};
-      var text = await studioAsk(artist, (changes ? 'Artist: improve ' : 'Artist: draw ') + it.name, prompt, {
-        maxTokens: 8000, box: box, summarize: function () { return (changes ? 'Improved ' : 'Drew ') + it.name + '.'; }
-      });
-      var svg = sanitizeSVG(text);
-      if (!svg) {
-        text = await studioAsk(artist, 'Artist: redraw ' + it.name, prompt + '\nReply with only the <svg>…</svg> code, nothing else.', { maxTokens: 8000, box: box, summarize: function () { return 'Redrew ' + it.name + '.'; } });
+        '\nRules: viewBox="0 0 512 512"; a head-and-shoulders game character portrait centred on a simple background shape; bold clean shapes, smooth curves, soft shading with gradients where useful; short logos or labels from the sheet are fine, but no other text; no <image>, no scripts, no external links; keep the file compact, under 10 KB, using simple shapes and short paths. Always reply with the COMPLETE drawing, never a partial edit. Reply with only the SVG code.';
+      var box = {}, svg = null;
+      try {
+        var text = await studioAsk(artist, (changes ? 'Artist: improve ' : 'Artist: draw ') + it.name, prompt, {
+          maxTokens: 16000, box: box, summarize: function () { return (changes ? 'Improved ' : 'Drew ') + it.name + '.'; }
+        });
         svg = sanitizeSVG(text);
+        if (!svg) {
+          text = await studioAsk(artist, 'Artist: redraw ' + it.name, prompt + '\nYour last reply was cut off or wasn’t valid SVG. Keep it compact (under 10 KB, simple shapes, short paths) and reply with only the complete <svg>…</svg> code.', { maxTokens: 16000, box: box, summarize: function () { return 'Redrew ' + it.name + '.'; } });
+          svg = sanitizeSVG(text);
+        }
+      } catch (err) {
+        if ((err && err.cancelled) || !it.svg) throw err;
       }
       var entry = box.entry;
-      if (!svg) throw studioErr(artist.name + ' couldn’t produce a working drawing of ' + it.name + '.');
+      if (!svg) {
+        if (it.svg) {
+          if (entry) { entry.text = 'This change didn’t come out as a working drawing, so the team kept the previous version of ' + it.name + '.'; entry.images = [it.preview]; }
+          renderStudio();
+          return false;
+        }
+        throw studioErr(artist.name + ' couldn’t produce a working drawing of ' + it.name + '.');
+      }
       it.svg = svg;
       it.preview = svgDataUrl(svg);
-      entry.images = [it.preview];
+      if (entry) entry.images = [it.preview];
       renderStudio();
+      return true;
     }
 
     async function paintItem(it, changes) {
@@ -1790,7 +1803,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
         var sees = capsOf(f).vision && imgs.length;
         var body = 'Review round ' + r + ' of ' + b.rounds + '.\nRequest: ' + b.text + '\nArt direction: ' + direction + '\nAvatars:\n' + desc +
           (sees ? '\nThe images are attached in the same order.'
-            : '\nYou can’t see images, so judge from the sheets and SVG code:\n' + items.map(function (it) { return it.name + ':\n' + String(it.svg || '(painted image only)').slice(0, 5000); }).join('\n\n')) +
+            : '\nYou can’t see images, so judge from the sheets and SVG code. The drawings are complete and render correctly; if the code below ends early, that is only because it was shortened for you.\n' +
+              items.map(function (it) { var code = String(it.svg || '(painted image only)'); return it.name + (it.painted ? ' (a painted version also exists)' : '') + ':\n' + code.slice(0, 16000) + (code.length > 16000 ? '\n[…shortened]' : ''); }).join('\n\n')) +
           '\nCheck quality: does each avatar match its sheet and the request, is it appealing and readable at small sizes, are the colors and shapes clean? Be specific.' +
           '\nReply with only JSON: {"reviews": [{"avatar": "Name", "score": 1-10, "good": "short", "fix": ["specific change"]}]}';
         try { return { f: f, d: await studioAsk(f, 'Reviewer, round ' + r, body, { json: true, images: sees ? imgs : [], summarize: fmtReviews }) }; }
