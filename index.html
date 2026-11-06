@@ -637,6 +637,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
     <div class="field" id="wrap-key">
       <label for="ed-key">API key</label>
       <input id="ed-key" type="password" spellcheck="false" autocomplete="off">
+      <label class="check"><input id="ed-remember" type="checkbox"> Remember API keys on this device</label>
+      <p class="hint" id="ed-key-hint"></p>
     </div>
     <div class="field" id="wrap-imgmodel">
       <label for="ed-imgmodel">Image model (for painting in Studio)</label>
@@ -763,7 +765,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
     roomName: 'Meeting Room',
     userName: 'You',
     mode: 'free',
-    rememberKeys: false,
+    rememberKeys: true,
     bannerClosed: false,
     friends: defaultFriends(),
     messages: []
@@ -1310,6 +1312,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
     $('ed-key').value = draft.key || '';
     $('ed-base').value = draft.base || '';
     $('ed-lead').checked = !!draft.lead;
+    $('ed-remember').checked = !!state.rememberKeys;
     $('ed-skills').value = draft.skills || '';
     $('ed-imgmodel').value = draft.imageModel || '';
     $('wrap-voice').hidden = !synth;
@@ -1338,6 +1341,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
     $('wrap-key').hidden = p === 'demo';
     $('wrap-base').hidden = p !== 'compatible';
     $('wrap-imgmodel').hidden = p !== 'openai';
+    $('ed-key-hint').textContent = $('ed-remember').checked
+      ? 'Keys are saved in this browser only, for every friend.'
+      : 'Keys will be forgotten when you close or reload this page.';
     $('ed-skills').placeholder = DEFAULT_SKILLS[p] || 'What this friend does best';
     $('ed-key').placeholder = p === 'compatible' ? 'Optional for some services' : 'Paste your key';
     var models = p === 'anthropic' ? ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'] : [];
@@ -1375,6 +1381,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
     draft.base = $('ed-base').value.trim();
     draft.lead = $('ed-lead').checked;
     if (synth) { draft.voice = $('ed-voice').value; draft.pitch = parseFloat($('ed-pitch').value) || 1; }
+    state.rememberKeys = $('ed-remember').checked;
     draft.skills = $('ed-skills').value.trim();
     draft.imageModel = $('ed-imgmodel').value.trim();
     if (draft.lead) state.friends.forEach(function (f) { f.lead = false; });
@@ -2673,6 +2680,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   window.addEventListener('resize', updateLayout);
   $('ed-name').addEventListener('input', renderEditorBits);
   $('ed-provider').addEventListener('change', renderEditorBits);
+  $('ed-remember').addEventListener('change', renderEditorBits);
   $('editor').addEventListener('click', function (e) { if (e.target === $('editor')) closeEditor(); });
   $('settings').addEventListener('click', function (e) { if (e.target === $('settings')) closeSettings(); });
   document.addEventListener('keydown', function (e) {
