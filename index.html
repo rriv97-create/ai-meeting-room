@@ -525,6 +525,26 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
             <input id="sf-refs" type="file" accept="image/*" multiple>
             <p class="hint">Up to 3. Friends who can see pictures use them for inspiration.</p>
           </div>
+          <div class="field full" id="sf-3d-wrap">
+            <label for="sf-3d">3D model (Meshy)</label>
+            <select id="sf-3d">
+              <option value="none">No 3D model</option>
+              <option value="model">3D model</option>
+              <option value="rig">3D model + skeleton (walk and run included)</option>
+              <option value="anim">3D model + skeleton + an animation</option>
+            </select>
+            <p class="hint">Uses your Meshy credits. Made from the first avatar.</p>
+          </div>
+          <div class="field full" id="sf-anim-wrap">
+            <label for="sf-anim">Animation</label>
+            <input id="sf-anim" type="text" maxlength="40" value="Idle" placeholder="Idle, wave, dance, jump…">
+          </div>
+          <label class="check full" id="sf-talk-wrap"><input id="sf-talk" type="checkbox"> Make the avatar talk (HeyGen)</label>
+          <div class="field full" id="sf-talk-line-wrap">
+            <label for="sf-talk-line">What should it say? (optional)</label>
+            <input id="sf-talk-line" type="text" maxlength="300" placeholder="Leave empty and the team writes a line">
+            <p class="hint">Uses HeyGen API credits. HeyGen needs to recognize a face, so some cartoon or robot designs may be rejected.</p>
+          </div>
         </div>
         <div id="sf-video" class="sgrid" hidden>
           <div class="field full">
@@ -543,6 +563,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
           <div class="field">
             <label for="sf-length">Length (seconds)</label>
             <input id="sf-length" type="number" min="5" max="180" value="30">
+          </div>
+          <label class="check full" id="sf-presenter-wrap"><input id="sf-presenter" type="checkbox"> Add a presenter clip (HeyGen)</label>
+          <div class="field full" id="sf-presenter-notes-wrap">
+            <label for="sf-presenter-notes">What should the presenter talk about? (optional)</label>
+            <textarea id="sf-presenter-notes" rows="2" maxlength="600"></textarea>
+            <p class="hint">The team writes the script and HeyGen records it with the avatar chosen in your HeyGen friend’s settings. Uses HeyGen API credits and usually takes 5–15 minutes.</p>
           </div>
         </div>
         <div class="field">
@@ -644,7 +670,17 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
       <label for="ed-imgmodel">Image model (for painting in Studio)</label>
       <input id="ed-imgmodel" type="text" placeholder="gpt-image-1" spellcheck="false">
     </div>
-    <label class="check"><input id="ed-lead" type="checkbox"> Room lead (hands out tasks in Lead decides)</label>
+    <div class="field" id="wrap-heygen">
+      <label for="ed-hg-avatar">HeyGen avatar (for presenter clips)</label>
+      <input id="ed-hg-avatar" type="text" list="hg-avatars" spellcheck="false" placeholder="Avatar ID">
+      <datalist id="hg-avatars"></datalist>
+      <label for="ed-hg-voice" class="lbl">HeyGen voice</label>
+      <input id="ed-hg-voice" type="text" list="hg-voices" spellcheck="false" placeholder="Voice ID (empty uses the avatar’s own voice)">
+      <datalist id="hg-voices"></datalist>
+      <button class="btn" type="button" id="ed-hg-load">Load my HeyGen avatars and voices</button>
+      <p class="hint" id="ed-hg-status"></p>
+    </div>
+    <label class="check" id="wrap-lead"><input id="ed-lead" type="checkbox"> Room lead (hands out tasks in Lead decides)</label>
     <p class="err-line" id="ed-error" hidden></p>
     <div class="actions">
       <button class="btn danger" type="button" id="ed-remove">Remove</button>
@@ -673,6 +709,14 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
     <div id="st-keys-wrap">
       <label class="check"><input id="st-keys" type="checkbox"> Remember API keys on this device</label>
       <p class="hint">When this is off, keys are forgotten when you close the page.</p>
+    </div>
+    <div class="field" id="st-proxy-wrap">
+      <label for="st-proxy">Studio connection (for Meshy and HeyGen)</label>
+      <div class="voice-row">
+        <input id="st-proxy" type="url" spellcheck="false" placeholder="https://ai-meeting-room-proxy….workers.dev">
+        <button class="btn" type="button" id="st-proxy-test">Test</button>
+      </div>
+      <p class="hint" id="st-proxy-status">A small helper on your Cloudflare account. Meshy and HeyGen only accept requests that go through it.</p>
     </div>
     <p class="hint" id="st-mode-note"></p>
     <div class="actions">
@@ -732,8 +776,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
     demo: { label: 'Claude (built-in demo)', short: 'Claude demo' },
     anthropic: { label: 'Anthropic API (Claude)', short: 'Anthropic' },
     openai: { label: 'OpenAI API (GPT)', short: 'OpenAI' },
-    compatible: { label: 'Other OpenAI-compatible API', short: 'that service' }
+    compatible: { label: 'Other OpenAI-compatible API', short: 'that service' },
+    meshy: { label: 'Meshy (3D models)', short: 'Meshy', tool: true },
+    heygen: { label: 'HeyGen (avatar videos)', short: 'HeyGen', tool: true }
   };
+  var DEFAULT_PROXY = '';
+  function isTool(f) { return !!(f && PROVIDERS[f.provider] && PROVIDERS[f.provider].tool); }
   var MODE_HELP = {
     free: 'Everyone hears you and jumps in if they have something to add.',
     turns: 'Friends answer one at a time and build on each other.',
@@ -779,7 +827,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
       var s = JSON.parse(raw);
       if (s && Array.isArray(s.friends) && s.friends.length) state.friends = s.friends;
       if (s && Array.isArray(s.messages)) state.messages = s.messages.filter(function (m) { return !m.pending; });
-      ['roomName', 'userName', 'mode', 'rememberKeys', 'bannerClosed'].forEach(function (k) { if (s && s[k] !== undefined) state[k] = s[k]; });
+      ['roomName', 'userName', 'mode', 'rememberKeys', 'bannerClosed', 'proxy'].forEach(function (k) { if (s && s[k] !== undefined) state[k] = s[k]; });
       state.messages.forEach(function (m) {
         if (m.role === 'tasks') m.tasks.forEach(function (t) { if (t.status === 'working' || t.status === 'waiting') t.status = 'stopped'; });
       });
@@ -817,13 +865,17 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
     if (f.provider === 'demo') return sampleState !== 'none';
     if (f.provider === 'anthropic' || f.provider === 'openai') return !!(f.key && f.model);
     if (f.provider === 'compatible') return !!(f.base && f.model);
+    if (isTool(f)) return RUNTIME === 'local' && !!(f.key && proxyBase());
     return false;
   }
   function needsLabel(f) {
     if (f.provider === 'demo') return RUNTIME === 'artifact' ? 'Offline' : 'Set up';
+    if (isTool(f) && f.key && !proxyBase()) return 'Connect';
     return 'Add key';
   }
-  function readyFriends() { return state.friends.filter(isReady); }
+  function readyFriends() { return state.friends.filter(function (f) { return isReady(f) && !isTool(f); }); }
+  function toolFriend(kind) { return state.friends.filter(function (f) { return f.provider === kind && isReady(f); })[0] || null; }
+  function proxyBase() { return String(state.proxy || DEFAULT_PROXY || '').trim().replace(/\/+$/, ''); }
   function leadOf(list) {
     for (var i = 0; i < list.length; i++) if (list[i].lead) return list[i];
     return list[0];
@@ -832,7 +884,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   // ---------- Rendering ----------
   function renderHeader() {
     $('room-title').textContent = state.roomName || 'Meeting Room';
-    var n = state.friends.length, r = readyFriends().length;
+    var n = state.friends.length, r = state.friends.filter(isReady).length;
     $('room-sub').textContent = n === 0 ? 'Invite a friend to start'
       : r === n ? (n === 1 ? '1 friend listening' : n + ' friends listening')
       : r + ' of ' + n + ' friends ready';
@@ -896,6 +948,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
       html += '<button class="chip" type="button" data-call="1">' + ICON_PHONE + 'Voice call</button>';
       html += '<button class="chip" type="button" data-recap="1">' + ICON_RECAP + 'Recap</button>';
       state.friends.forEach(function (f) {
+        if (isTool(f)) return;
         html += '<button class="chip tone-' + esc(f.color) + '" type="button" data-mention="' + esc(f.id) + '" aria-label="Ask only ' + esc(f.name) + '"><span class="mini"></span>@' + esc(f.name) + '</button>';
       });
     }
@@ -1024,7 +1077,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   }
 
   function systemFor(f) {
-    var others = state.friends.filter(function (o) { return o.id !== f.id; });
+    var others = state.friends.filter(function (o) { return o.id !== f.id && !isTool(o); });
     var roster = userName() + ' (the human)' + others.map(function (o) { return ', ' + o.name + (o.lead ? ' (room lead)' : ''); }).join('');
     return 'You are ' + f.name + ', one of ' + state.friends.length + ' AI friends in a group chat room with ' + userName() + '.\n' +
       'Everyone in the room: ' + roster + ', and you.\n' +
@@ -1315,6 +1368,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
     $('ed-remember').checked = !!state.rememberKeys;
     $('ed-skills').value = draft.skills || '';
     $('ed-imgmodel').value = draft.imageModel || '';
+    $('ed-hg-avatar').value = draft.hgAvatar || '';
+    $('ed-hg-voice').value = draft.hgVoice || '';
+    $('ed-hg-status').textContent = '';
     $('wrap-voice').hidden = !synth;
     if (synth) { fillVoiceSelect(draft.voice || ''); $('ed-pitch').value = String(pitchFor(draft)); }
     $('ed-remove').hidden = !base;
@@ -1337,10 +1393,14 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
       return '<button type="button" class="sw tone-' + c + '" data-color="' + c + '" aria-pressed="' + (draft.color === c) + '" aria-label="' + c + '"></button>';
     }).join('');
     var p = $('ed-provider').value;
-    $('wrap-model').hidden = p === 'demo';
+    var tool = !!(PROVIDERS[p] && PROVIDERS[p].tool);
+    $('wrap-model').hidden = p === 'demo' || tool;
     $('wrap-key').hidden = p === 'demo';
     $('wrap-base').hidden = p !== 'compatible';
     $('wrap-imgmodel').hidden = p !== 'openai';
+    $('wrap-heygen').hidden = p !== 'heygen';
+    $('wrap-lead').hidden = tool;
+    $('wrap-voice').hidden = !synth || tool;
     $('ed-key-hint').textContent = $('ed-remember').checked
       ? 'Keys are saved in this browser only, for every friend.'
       : 'Keys will be forgotten when you close or reload this page.';
@@ -1355,8 +1415,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
         : 'The built-in demo only works on claude.ai. Choose an API instead.',
       anthropic: 'Get a key at console.anthropic.com. The key is sent only to Anthropic.',
       openai: 'Get a key at platform.openai.com. The key is sent only to OpenAI.',
-      compatible: 'For services that copy OpenAI’s format, such as OpenRouter or a model running on your own computer. Enter the address that ends in /v1.'
+      compatible: 'For services that copy OpenAI’s format, such as OpenRouter or a model running on your own computer. Enter the address that ends in /v1.',
+      meshy: 'A Studio helper, not a chat friend. Turns finished avatars into 3D models, rigs them and adds animations. Get a key at meshy.ai under Settings, API. Uses your Meshy credits.',
+      heygen: 'A Studio helper, not a chat friend. Records talking presenter clips and can make an avatar talk. Get a key in HeyGen under Settings, API. API usage is billed separately from the HeyGen app.'
     }[p];
+    if (tool && !proxyBase()) hint += ' First add your Studio connection in Room settings.';
     if (RUNTIME === 'artifact' && p === 'demo') {
       hint += ' Other brains need the downloadable version of this page.';
     }
@@ -1384,10 +1447,14 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
     state.rememberKeys = $('ed-remember').checked;
     draft.skills = $('ed-skills').value.trim();
     draft.imageModel = $('ed-imgmodel').value.trim();
+    draft.hgAvatar = $('ed-hg-avatar').value.trim();
+    draft.hgVoice = $('ed-hg-voice').value.trim();
+    if (draft.hgAvatar && heygenDefaults[draft.hgAvatar]) draft.hgDefaultVoice = heygenDefaults[draft.hgAvatar];
+    if (isTool(draft)) draft.lead = false;
     if (draft.lead) state.friends.forEach(function (f) { f.lead = false; });
     var idx = state.friends.map(function (f) { return f.id; }).indexOf(draft.id);
     if (idx >= 0) state.friends[idx] = draft; else state.friends.push(draft);
-    if (!state.friends.some(function (f) { return f.lead; }) && state.friends.length) state.friends[0].lead = true;
+    if (!state.friends.some(function (f) { return f.lead; })) { var firstChat = state.friends.filter(function (f) { return !isTool(f); })[0]; if (firstChat) firstChat.lead = true; }
     var wasNew = idx < 0, nm = draft.name;
     closeEditor(); save(); renderAll();
     if (wasNew && state.messages.length) push({ role: 'note', text: nm + ' joined the room' });
@@ -1412,6 +1479,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
     $('st-user').value = state.userName;
     $('st-keys').checked = !!state.rememberKeys;
     $('st-keys-wrap').hidden = RUNTIME === 'artifact';
+    $('st-proxy-wrap').hidden = RUNTIME === 'artifact';
+    $('st-proxy').value = state.proxy || DEFAULT_PROXY || '';
     $('st-mode-note').textContent = RUNTIME === 'artifact'
       ? 'This is the demo version. Your conversation is saved in this browser only.'
       : 'Your conversation and settings are saved in this browser only.';
@@ -1421,9 +1490,54 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
     state.roomName = $('st-room').value.trim() || 'Meeting Room';
     state.userName = $('st-user').value.trim() || 'You';
     state.rememberKeys = $('st-keys').checked;
+    if (RUNTIME === 'local') state.proxy = $('st-proxy').value.trim();
     $('settings').hidden = true;
     save(); renderAll();
   }
+  async function testProxy() {
+    var base = $('st-proxy').value.trim().replace(/\/+$/, '');
+    var out = $('st-proxy-status');
+    if (!/^https:\/\//i.test(base)) { out.textContent = 'Enter the address that starts with https://'; return; }
+    out.textContent = 'Testing…';
+    try {
+      var res = await fetch(base + '/health');
+      var d = await res.json().catch(function () { return {}; });
+      out.textContent = res.ok && d.ok ? 'Connected. Meshy and HeyGen can work now.' : ((d.error && d.error.message) || ('The connection answered with error ' + res.status + '.'));
+    } catch (e) {
+      out.textContent = 'Couldn’t reach it. Check the address, and that you opened the app from its web address.';
+    }
+  }
+  async function loadHeygen() {
+    var key = $('ed-key').value.trim(), out = $('ed-hg-status');
+    if (!key) { out.textContent = 'Paste your HeyGen key first.'; return; }
+    if (!proxyBase()) { out.textContent = 'Add your Studio connection in Room settings first.'; return; }
+    out.textContent = 'Loading…';
+    var f = { provider: 'heygen', key: key };
+    try {
+      var mine = await toolCall(f, '/v3/avatars/looks?ownership=private&limit=50').catch(function () { return { data: [] }; });
+      var pub = await toolCall(f, '/v3/avatars/looks?ownership=public&limit=50');
+      var looks = (mine.data || []).map(function (l) { l._mine = true; return l; }).concat(pub.data || []);
+      $('hg-avatars').innerHTML = looks.map(function (l) {
+        return '<option value="' + esc(l.id) + '" label="' + esc((l._mine ? 'Yours: ' : '') + l.name + (l.default_voice_id ? '' : '')) + '"></option>';
+      }).join('');
+      heygenDefaults = {};
+      looks.forEach(function (l) { if (l.default_voice_id) heygenDefaults[l.id] = l.default_voice_id; });
+      var vcount = 0;
+      try {
+        var vr = await toolCall(f, '/v3/voices?limit=100');
+        var voices = Array.isArray(vr.data) ? vr.data : (vr.data && vr.data.voices) || vr.voices || [];
+        vcount = voices.length;
+        $('hg-voices').innerHTML = voices.map(function (v) {
+          var id = v.voice_id || v.id;
+          return '<option value="' + esc(id) + '" label="' + esc([v.name, v.language, v.gender].filter(Boolean).join(' · ')) + '"></option>';
+        }).join('');
+      } catch (e2) { /* voices are optional */ }
+      out.textContent = 'Loaded ' + looks.length + ' avatars' + (vcount ? ' and ' + vcount + ' voices' : '') + '. Click a box and pick from the list.';
+    } catch (e) {
+      out.textContent = (e && e.message) || 'Couldn’t load from HeyGen.';
+    }
+  }
+  var heygenDefaults = {};
 
   // ---------- Studio ----------
   var sampleImages = 0;
@@ -1457,6 +1571,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   }
   function capsList(f) {
     var c = capsOf(f);
+    if (isTool(f)) {
+      if (!c.ready) return [{ t: f.key ? 'Needs the Studio connection' : 'Not set up', cls: 'off' }];
+      return [{ t: f.provider === 'meshy' ? 'Makes 3D models, rigs and animations' : 'Makes talking avatar videos', cls: 'paint' }];
+    }
     if (!c.ready) return [{ t: 'Not set up', cls: 'off' }];
     var out = [{ t: 'Writes and draws in code', cls: '' }];
     if (c.vision) out.push({ t: 'Sees pictures', cls: '' });
@@ -1666,6 +1784,257 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
     }).join('\n');
   }
 
+  // ----- Meshy and HeyGen (through the Studio connection) -----
+  function sleep(ms) {
+    return new Promise(function (res, rej) {
+      var sig = sSignal();
+      var t = setTimeout(res, ms);
+      if (sig) sig.addEventListener('abort', function () { clearTimeout(t); rej({ cancelled: true }); }, { once: true });
+    });
+  }
+  async function toolCall(f, path, method, body) {
+    var base = proxyBase();
+    if (!base) throw new Error('Add your Studio connection in Room settings first.');
+    var headers = { accept: 'application/json' };
+    if (f.provider === 'meshy') headers.Authorization = 'Bearer ' + f.key; else headers['x-api-key'] = f.key;
+    if (body) headers['content-type'] = 'application/json';
+    var res;
+    try {
+      res = await fetch(base + '/' + f.provider + path, { method: method || 'GET', headers: headers, body: body ? JSON.stringify(body) : undefined, signal: sSignal() });
+    } catch (e) {
+      if (e && e.name === 'AbortError') throw { cancelled: true };
+      throw new Error('Couldn’t reach the Studio connection. Check its address in Room settings.');
+    }
+    var data = await res.json().catch(function () { return {}; });
+    if (!res.ok) {
+      var msg = (data.error && (data.error.message || data.error)) || data.message || ('error ' + res.status);
+      throw new Error(PROVIDERS[f.provider].short + ' said: ' + (typeof msg === 'string' ? msg : JSON.stringify(msg)));
+    }
+    return data;
+  }
+  async function fetchFile(url) {
+    var res;
+    try { res = await fetch(proxyBase() + '/fetch?url=' + encodeURIComponent(url), { signal: sSignal() }); }
+    catch (e) { if (e && e.name === 'AbortError') throw { cancelled: true }; throw new Error('Couldn’t download a finished file.'); }
+    if (!res.ok) throw new Error('Couldn’t download a finished file (error ' + res.status + ').');
+    return res.blob();
+  }
+  function blobToDataUrl(blob) {
+    return new Promise(function (res, rej) { var r = new FileReader(); r.onload = function () { res(String(r.result)); }; r.onerror = rej; r.readAsDataURL(blob); });
+  }
+  async function meshyRun(f, path, body, stageKey) {
+    var created = await toolCall(f, path, 'POST', body);
+    var id = created.result;
+    if (!id) throw new Error('Meshy didn’t start the task.');
+    var started = Date.now();
+    for (;;) {
+      await sleep(5000);
+      checkStop();
+      var t = await toolCall(f, path + '/' + id);
+      var st = setStage(stageKey);
+      st.progress = (Number(t.progress) || 0) / 100;
+      renderStudio();
+      if (t.status === 'SUCCEEDED') { t.id = t.id || id; return t; }
+      if (t.status === 'FAILED' || t.status === 'CANCELED') throw new Error('Meshy: ' + ((t.task_error && t.task_error.message) || 'the task didn’t finish.'));
+      if (Date.now() - started > 30 * 60000) throw new Error('Meshy took longer than 30 minutes. Check your Meshy dashboard for the result.');
+    }
+  }
+  async function heygenVideo(f, body, stageKey) {
+    var created = await toolCall(f, '/v3/videos', 'POST', body);
+    var id = created.data && created.data.video_id;
+    if (!id) throw new Error('HeyGen didn’t start the video.');
+    var started = Date.now();
+    for (;;) {
+      await sleep(10000);
+      checkStop();
+      var v = (await toolCall(f, '/v3/videos/' + id)).data || {};
+      var st = setStage(stageKey);
+      st.extra = Math.max(1, Math.round((Date.now() - started) / 60000)) + ' min';
+      renderStudio();
+      if (v.status === 'completed' && v.video_url) return v;
+      if (v.status === 'failed') throw new Error('HeyGen: ' + (v.failure_message || 'the video didn’t finish.'));
+      if (Date.now() - started > 45 * 60000) throw new Error('HeyGen took longer than 45 minutes. Check your HeyGen dashboard for the video.');
+    }
+  }
+
+  async function make3D(b, it, mesh, painter, lead, portrait) {
+    setStage('3d-ref', null, undefined, 'working');
+    var refUrl = null;
+    if (painter) {
+      var e = logEntry(painter, 'Painter: full-body view for 3D', '');
+      e.pending = true; renderStudio();
+      try {
+        var src = it.painted ? dataUrlParts(it.painted) : portrait;
+        refUrl = await openaiImage(painter, 'Full-body 3D modeling reference of ' + it.name + '. ' + (it.sheet.look || '') +
+          '. Keep the exact same character design, colors and style as the reference image. Show the WHOLE body from head to feet, standing straight in an A-pose with arms slightly away from the body, front view, centered, plain white background, soft even lighting, no shadows, no text.',
+          src ? b64ToBlob(src.b64, src.mime) : null);
+        e.pending = false; e.text = 'Painted a full-body view for the 3D model.'; e.images = [refUrl];
+      } catch (err) {
+        e.pending = false;
+        if (err && err.cancelled) throw err;
+        e.error = ((err && err.message) || 'Painting failed.') + ' Using the portrait instead.';
+      }
+      renderStudio();
+    }
+    if (!refUrl && portrait) refUrl = 'data:' + portrait.mime + ';base64,' + portrait.b64;
+    if (!refUrl) throw new Error('There was no picture to build the 3D model from.');
+    setStage('3d-ref', null, undefined, 'done');
+
+    setStage('3d-model', null, undefined, 'working');
+    var e2 = logEntry(mesh, 'Meshy: build the 3D model', 'Sculpting and texturing. This usually takes 2–5 minutes.');
+    var m = await meshyRun(mesh, '/v1/image-to-3d', {
+      image_url: refUrl, ai_model: 'latest', should_texture: true, should_remesh: true,
+      topology: 'triangle', target_polycount: 30000, pose_mode: 'a-pose'
+    }, '3d-model');
+    var mu = m.model_urls || {};
+    var thumb = null;
+    if (m.thumbnail_url) { try { thumb = await blobToDataUrl(await fetchFile(m.thumbnail_url)); } catch (e) { if (e && e.cancelled) throw e; } }
+    e2.text = 'Built the 3D model.'; if (thumb) e2.images = [thumb];
+    setStage('3d-model', null, undefined, 'done');
+    var res = { kind: 'model', name: it.name + ' 3D', thumb: thumb, previewUrl: mu.glb || '', files: [] };
+    if (mu.glb) res.files.push({ label: 'Model GLB', url: mu.glb, ext: 'glb' });
+    if (mu.fbx) res.files.push({ label: 'Model FBX', url: mu.fbx, ext: 'fbx' });
+
+    if (b.want3d === 'rig' || b.want3d === 'anim') {
+      setStage('3d-rig', null, undefined, 'working');
+      var e3 = logEntry(mesh, 'Meshy: add a skeleton', 'Adding bones so the character can move.');
+      var rig = null;
+      try { rig = await meshyRun(mesh, '/v1/rigging', { input_task_id: m.id }, '3d-rig'); }
+      catch (err) {
+        if (err && err.cancelled) throw err;
+        e3.error = ((err && err.message) || 'Rigging failed.') + ' Rigging only works on two-legged, human-shaped characters. You still get the 3D model.';
+        setStage('3d-rig', null, undefined, 'failed');
+        if (b.want3d === 'anim') setStage('3d-anim', null, undefined, 'skipped');
+        renderStudio();
+      }
+      if (rig) {
+        var rr = rig.result || {};
+        var ba = rr.basic_animations || {};
+        if (rr.rigged_character_glb_url) { res.files.push({ label: 'Rigged GLB', url: rr.rigged_character_glb_url, ext: 'glb' }); res.previewUrl = rr.rigged_character_glb_url; }
+        if (rr.rigged_character_fbx_url) res.files.push({ label: 'Rigged FBX', url: rr.rigged_character_fbx_url, ext: 'fbx' });
+        if (ba.walking_glb_url) res.files.push({ label: 'Walk GLB', url: ba.walking_glb_url, ext: 'glb' });
+        if (ba.walking_fbx_url) res.files.push({ label: 'Walk FBX', url: ba.walking_fbx_url, ext: 'fbx' });
+        if (ba.running_glb_url) res.files.push({ label: 'Run GLB', url: ba.running_glb_url, ext: 'glb' });
+        if (ba.running_fbx_url) res.files.push({ label: 'Run FBX', url: ba.running_fbx_url, ext: 'fbx' });
+        if (ba.walking_glb_url) res.previewUrl = ba.walking_glb_url;
+        e3.text = 'Added a skeleton.' + (ba.walking_glb_url ? ' Walking and running animations are included.' : '');
+        setStage('3d-rig', null, undefined, 'done');
+
+        if (b.want3d === 'anim') {
+          setStage('3d-anim', null, undefined, 'working');
+          var e4 = logEntry(mesh, 'Meshy: animate', 'Looking for a “' + b.anim + '” animation.');
+          try {
+            var lib = await toolCall(mesh, '/v1/animations/library?search=' + encodeURIComponent(b.anim));
+            var list = Array.isArray(lib) ? lib : (lib.result || lib.data || lib.items || lib.animations || []);
+            var pick = list.filter(function (x) { return x && x.action_id != null; })[0];
+            if (!pick) {
+              e4.text = 'No animation matched “' + b.anim + '”, so the team kept walk and run.';
+              setStage('3d-anim', null, undefined, 'skipped');
+            } else {
+              e4.text = 'Applying “' + pick.name + '”.'; renderStudio();
+              var an = await meshyRun(mesh, '/v1/animations', { rig_task_id: rig.id, action_id: pick.action_id }, '3d-anim');
+              var ar = an.result || {};
+              if (ar.animation_glb_url) { res.files.push({ label: pick.name + ' GLB', url: ar.animation_glb_url, ext: 'glb' }); res.previewUrl = ar.animation_glb_url; }
+              if (ar.animation_fbx_url) res.files.push({ label: pick.name + ' FBX', url: ar.animation_fbx_url, ext: 'fbx' });
+              e4.text = 'Added the “' + pick.name + '” animation.';
+              setStage('3d-anim', null, undefined, 'done');
+            }
+          } catch (err) {
+            if (err && err.cancelled) throw err;
+            e4.error = (err && err.message) || 'Animation failed.';
+            setStage('3d-anim', null, undefined, 'failed');
+          }
+          renderStudio();
+        }
+      }
+    }
+
+    if (thumb) {
+      setStage('3d-check', null, undefined, 'working');
+      var viewers = readyFriends().filter(function (f) { return capsOf(f).vision; }).slice(0, 2);
+      var imgs = [dataUrlParts(thumb)].concat(portrait ? [portrait] : []).filter(Boolean);
+      await Promise.all(viewers.map(function (f) {
+        return studioAsk(f, 'Reviewer: 3D model', 'The first image is a preview of the 3D model Meshy built for ' + it.name + '. The second is the finished avatar it should match. ' +
+          'Is the 3D model faithful and usable as a game character? Reply with only JSON: {"score": 1-10, "good": "short", "fix": ["what to adjust in a 3D tool"]}',
+          { json: true, images: imgs, summarize: fmtReviews }).catch(function (err) { if (err && err.cancelled) throw err; });
+      }));
+      setStage('3d-check', null, undefined, 'done');
+    }
+    if (res.previewUrl) { try { res.previewBlob = URL.createObjectURL(await fetchFile(res.previewUrl)); } catch (e) { if (e && e.cancelled) throw e; } }
+    return res;
+  }
+
+  async function makeTalk(b, it, hg, lead, portrait) {
+    if (!portrait) throw new Error('There was no picture to animate.');
+    setStage('talk-script', null, undefined, 'working');
+    var line = b.talkLine;
+    if (!line) {
+      line = await studioAsk(lead, 'Writer: a line for ' + it.name, 'Write one short, upbeat line (at most 30 words) that ' + it.name +
+        ' says to introduce themselves to players. Character: ' + JSON.stringify(it.sheet) + '. Plain text only, no quotes, no stage directions.', { tier: 'quick' });
+    }
+    line = String(line).replace(/^["“\s]+|["”\s]+$/g, '').slice(0, 600);
+    setStage('talk-script', null, undefined, 'done');
+    setStage('talk-video', null, undefined, 'working');
+    var voice = hg.hgVoice || hg.hgDefaultVoice;
+    if (!voice) throw new Error('Pick a HeyGen voice in ' + hg.name + '’s settings first.');
+    var e = logEntry(hg, 'HeyGen: make ' + it.name + ' talk', 'Animating the picture. HeyGen usually takes 5–15 minutes.');
+    try {
+      var v = await heygenVideo(hg, {
+        type: 'image', image: { type: 'base64', media_type: portrait.mime, data: portrait.b64 },
+        script: line, voice_id: voice, aspect_ratio: '1:1', resolution: '720p', title: it.name + ' talking'
+      }, 'talk-video');
+      var blob = await fetchFile(v.video_url);
+      e.text = 'Done! ' + it.name + ' says: “' + line + '”';
+      setStage('talk-video', null, undefined, 'done');
+      renderStudio();
+      return { kind: 'video', name: it.name + ' talking', url: URL.createObjectURL(blob), blob: blob, ext: 'mp4' };
+    } catch (err) {
+      if (err && err.cancelled) throw err;
+      e.error = (err && err.message) || 'HeyGen couldn’t make the video.';
+      setStage('talk-video', null, undefined, 'failed');
+      renderStudio();
+      return null;
+    }
+  }
+
+  async function avatarExtras(b, items, lead, painter) {
+    var mesh = b.want3d !== 'none' ? toolFriend('meshy') : null;
+    var hg = b.talk ? toolFriend('heygen') : null;
+    var out = [];
+    if (!mesh && !hg) return out;
+    var hero = items.filter(function (it) { return it.painted || it.svg; })[0];
+    if (!hero) return out;
+    if (items.length > 1) sysLog('The 3D and talking extras use the first avatar, ' + hero.name + ', to save credits.');
+    var portrait = hero.painted ? dataUrlParts(hero.painted) : null;
+    if (!portrait && hero.svg) portrait = dataUrlParts(await svgToPng(hero.svg, 1024, true));
+    if (mesh) {
+      try { out.push(await make3D(b, hero, mesh, painter, lead, portrait)); }
+      catch (err) {
+        if (err && err.cancelled) throw err;
+        sysLog('3D model: ' + ((err && err.message) || 'something went wrong.'));
+        studio.stages.forEach(function (s) { if (s.key.indexOf('3d-') === 0 && (s.status === 'working' || s.status === 'waiting')) s.status = s.status === 'working' ? 'failed' : 'skipped'; });
+      }
+    }
+    if (hg) {
+      try { var t = await makeTalk(b, hero, hg, lead, portrait); if (t) out.push(t); }
+      catch (err) {
+        if (err && err.cancelled) throw err;
+        sysLog('Talking avatar: ' + ((err && err.message) || 'something went wrong.'));
+        studio.stages.forEach(function (s) { if (s.key.indexOf('talk-') === 0 && (s.status === 'working' || s.status === 'waiting')) s.status = s.status === 'working' ? 'failed' : 'skipped'; });
+      }
+    }
+    return out;
+  }
+
+  var MV_URL = 'https://unpkg.com/@google/model-viewer@3.5.0/dist/model-viewer.min.js';
+  function ensureModelViewer() {
+    if (window.customElements && customElements.get('model-viewer')) return;
+    if (document.getElementById('mv-script')) return;
+    var s = document.createElement('script');
+    s.id = 'mv-script'; s.type = 'module'; s.src = MV_URL;
+    document.head.appendChild(s);
+  }
+
   // ----- Game avatars -----
   async function runAvatars(b) {
     var team = readyFriends(), lead = leadOf(team);
@@ -1704,6 +2073,18 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
     if (painter) setStage('paint', 'Paint the final images', painter, 'waiting');
     for (var rr = 1; rr <= b.rounds; rr++) setStage('review' + rr, 'Review round ' + rr + ' (' + reviewers.map(function (f) { return f.name; }).join(', ') + ')', lead, 'waiting');
     setStage('final', 'Deliver the final product', lead, 'waiting');
+    var meshF = b.want3d !== 'none' ? toolFriend('meshy') : null, hgF = b.talk ? toolFriend('heygen') : null;
+    if (meshF) {
+      setStage('3d-ref', 'Paint a full-body view for 3D', painter || painters[0] || null, 'waiting', 'final');
+      setStage('3d-model', 'Build the 3D model', meshF, 'waiting', 'final');
+      if (b.want3d === 'rig' || b.want3d === 'anim') setStage('3d-rig', 'Add a skeleton', meshF, 'waiting', 'final');
+      if (b.want3d === 'anim') setStage('3d-anim', 'Animate: ' + b.anim, meshF, 'waiting', 'final');
+      setStage('3d-check', 'Check the 3D model', lead, 'waiting', 'final');
+    }
+    if (hgF) {
+      setStage('talk-script', 'Write a line to say', lead, 'waiting', 'final');
+      setStage('talk-video', 'Make the avatar talk', hgF, 'waiting', 'final');
+    }
 
     setStage('concept', null, undefined, 'working');
     var sheets = await studioAsk(concept, 'Concept: character sheets',
@@ -1835,13 +2216,15 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
       setStage('revise' + r, null, undefined, 'done');
     }
 
+    var extras = await avatarExtras(b, items, lead, painter || painters[0] || null);
     setStage('final', null, undefined, 'working');
+    var extraNote = extras.map(function (x) { return x.kind === 'model' ? 'a 3D model' : 'a talking video'; }).join(' and ');
     studio.summary = await studioAsk(lead, 'Lead: deliver the final product',
-      'The team finished these avatars: ' + items.map(function (it) { return it.name; }).join(', ') + '. Write a short, warm delivery note to ' + userName() +
+      'The team finished these avatars: ' + items.map(function (it) { return it.name; }).join(', ') + (extraNote ? ', plus ' + extraNote : '') + '. Write a short, warm delivery note to ' + userName() +
       ' (2 or 3 sentences, plain text) about what the team made and how the reviews improved it.', { tier: 'quick' });
     studio.results = items.filter(function (it) { return it.svg || it.painted; }).map(function (it) {
       return { kind: 'image', name: it.name, svg: it.svg, preview: it.preview, painted: it.painted };
-    });
+    }).concat(extras);
     studio.resultsVer++;
     setStage('final', null, undefined, 'done');
   }
@@ -2076,11 +2459,49 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
     var clips = [];
     for (var i = 0; i < b.clips.length; i++) { checkStop(); clips.push(await inspectClip(b.clips[i], i)); }
     var musicLen = b.music ? await audioDuration(b.music) : 0;
-    sysLog('Loaded ' + clips.length + ' clip' + (clips.length > 1 ? 's' : '') + (b.music ? ' and a music track' : '') + '.', clips.map(function (c) { return c.thumbs[Math.floor(c.thumbs.length / 2)].url; }));
+    if (clips.length || b.music) sysLog('Loaded ' + clips.length + ' clip' + (clips.length === 1 ? '' : 's') + (b.music ? ' and a music track' : '') + '.', clips.map(function (c) { return c.thumbs[Math.floor(c.thumbs.length / 2)].url; }));
     setStage('inspect', null, undefined, 'done');
+
+    var presenterNote = '';
+    var hgF = b.presenter ? toolFriend('heygen') : null;
+    if (b.presenter && !hgF) sysLog('No HeyGen friend is set up, so the team will skip the presenter clip.');
+    else if (hgF && !hgF.hgAvatar) { sysLog('Pick a HeyGen avatar in ' + hgF.name + '’s settings to add a presenter. Skipping it this time.'); hgF = null; }
+    if (hgF) {
+      var fmtAR = { vertical: '9:16', square: '1:1', wide: '16:9' }[b.format] || '9:16';
+      setStage('presenter-script', 'Write the presenter script', lead, 'working');
+      var words0 = Math.round(Math.min(b.length, 90) * 2.3);
+      var script = await studioAsk(lead, 'Writer: presenter script',
+        'Request from ' + userName() + ': ' + b.text + (b.presenterNotes ? '\nWhat the presenter should cover: ' + b.presenterNotes : '') +
+        (clips.length ? '\nThe video also uses these clips: ' + clips.map(function (c) { return '"' + c.name + '"'; }).join(', ') : '') +
+        '\nWrite what an on-camera presenter says in this video: about ' + words0 + ' words, warm and natural to say out loud. Plain text only, no stage directions, no headings.',
+        { tier: 'default' });
+      script = String(script).replace(/^["“\s]+|["”\s]+$/g, '').slice(0, 2500);
+      setStage('presenter-script', null, undefined, 'done');
+      setStage('presenter', 'Record the presenter clip', hgF, 'working');
+      var pe = logEntry(hgF, 'HeyGen: record the presenter', 'Recording. HeyGen usually takes 5–15 minutes.');
+      var pbody = { type: 'avatar', avatar_id: hgF.hgAvatar, script: script, aspect_ratio: fmtAR, resolution: '720p', title: 'Studio presenter' };
+      if (hgF.hgVoice) pbody.voice_id = hgF.hgVoice;
+      try {
+        var pv = await heygenVideo(hgF, pbody, 'presenter');
+        var pblob = await fetchFile(pv.video_url);
+        var pfile = new File([pblob], 'heygen-presenter.mp4', { type: pblob.type || 'video/mp4' });
+        var pc = await inspectClip(pfile, clips.length);
+        clips.push(pc);
+        presenterNote = '\nClip ' + (pc.index + 1) + ' is the presenter: a HeyGen avatar speaking this script: "' + script.slice(0, 1200) + '". Keep its voice-over (keepClipAudio true) and use its key lines.';
+        pe.text = 'Recorded the presenter clip (' + (pc.duration ? pc.duration.toFixed(0) + 's' : 'done') + ').'; pe.images = [pc.thumbs[0].url];
+        setStage('presenter', null, undefined, 'done');
+      } catch (err) {
+        if (err && err.cancelled) throw err;
+        pe.error = (err && err.message) || 'HeyGen couldn’t record the clip.';
+        setStage('presenter', null, undefined, 'failed');
+      }
+      renderStudio();
+    }
+    if (!clips.length) throw studioErr('There are no clips to edit. Add video clips, or a working presenter clip.');
+
     var clipText = clips.map(function (c) {
       return 'Clip ' + (c.index + 1) + ': "' + c.name + '", ' + (c.duration ? c.duration.toFixed(1) + 's' : 'unknown length') + ', ' + c.w + 'x' + c.h + '. Frames at ' + c.thumbs.map(function (t) { return t.t.toFixed(1) + 's'; }).join(', ');
-    }).join('\n');
+    }).join('\n') + presenterNote;
     var frames = [];
     clips.forEach(function (c) { c.thumbs.forEach(function (t) { frames.push(dataUrlParts(t.url)); }); });
     frames = frames.slice(0, 12);
@@ -2198,7 +2619,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
       music: ($('sf-music').files || [])[0] || null,
       format: $('sf-format').value,
       length: clamp($('sf-length').value, 5, 180, 30),
-      rounds: Number($('sf-rounds').value) || 2
+      rounds: Number($('sf-rounds').value) || 2,
+      want3d: toolFriend('meshy') ? $('sf-3d').value : 'none',
+      anim: $('sf-anim').value.trim() || 'Idle',
+      talk: !!toolFriend('heygen') && $('sf-talk').checked,
+      talkLine: $('sf-talk-line').value.trim(),
+      presenter: !!toolFriend('heygen') && $('sf-presenter').checked,
+      presenterNotes: $('sf-presenter-notes').value.trim()
     };
   }
 
@@ -2209,7 +2636,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
     var problem = !readyFriends().length
       ? (RUNTIME === 'artifact' ? 'Your friends can’t work in this view. Open the page in the Claude app or on claude.ai.' : 'Set up at least one friend first. Tap a friend in the chat to add their API key.')
       : !b.text ? 'Describe what the team should make.'
-      : (b.type === 'video' && !b.clips.length) ? 'Add at least one video clip.' : '';
+      : (b.type === 'video' && !b.clips.length && !b.presenter) ? 'Add at least one video clip, or turn on the presenter clip.' : '';
     if (problem) { studio.msg = problem; renderStudio(); return; }
     studio.running = true;
     studio.ctl = new AbortController();
@@ -2263,12 +2690,20 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
     document.body.appendChild(a); a.click();
     setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 5000);
   }
-  async function saveResult(i, kind) {
+  function slug(s) { return String(s || 'file').replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-').toLowerCase() || 'file'; }
+  async function saveResult(i, kind, k) {
     var r = studio.results[i];
     if (!r) return;
-    var base = String(r.name || 'file').replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-').toLowerCase() || 'file';
+    var base = slug(r.name);
     try {
-      if (kind === 'video') await saveBlob(r.blob, base + '.' + r.ext);
+      if (kind === 'file') {
+        var fl = r.files && r.files[k];
+        if (!fl) return;
+        studio.msg = 'Downloading ' + fl.label + '…'; renderStudio();
+        await saveBlob(await fetchFile(fl.url), base + '-' + slug(fl.label.replace(/\s*(GLB|FBX)$/i, '')) + '.' + fl.ext);
+        studio.msg = ''; renderStudio();
+      }
+      else if (kind === 'video') await saveBlob(r.blob, base + '.' + r.ext);
       else if (kind === 'svg') await saveBlob(new Blob([r.svg], { type: 'image/svg+xml' }), base + '.svg');
       else if (kind === 'png') { var p = dataUrlParts(await svgToPng(r.svg, 1024, false)); await saveBlob(b64ToBlob(p.b64, 'image/png'), base + '.png'); }
       else if (kind === 'painted') {
@@ -2304,6 +2739,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
     $('sf-text').placeholder = studio.type === 'avatars'
       ? 'Four space explorers for my mobile game, each with a different job on the ship'
       : 'Turn my beach day clips into a fun, upbeat reel';
+    var hasMesh = !!toolFriend('meshy'), hasHg = !!toolFriend('heygen');
+    $('sf-3d-wrap').hidden = !hasMesh;
+    $('sf-anim-wrap').hidden = !hasMesh || $('sf-3d').value !== 'anim';
+    $('sf-talk-wrap').hidden = !hasHg;
+    $('sf-talk-line-wrap').hidden = !hasHg || !$('sf-talk').checked;
+    $('sf-presenter-wrap').hidden = !hasHg;
+    $('sf-presenter-notes-wrap').hidden = !hasHg || !$('sf-presenter').checked;
     if (!started) {
       var team = state.friends;
       $('sf-team').innerHTML = team.length ? team.map(function (f) {
@@ -2317,6 +2759,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
         var cls = s.status === 'working' ? 'working' : s.status === 'done' ? 'done' : (s.status === 'failed' || s.status === 'stopped') ? 'failed' : '';
         var who = f ? avatar(f, 26) : '<span class="av tone-sky" style="--s:26px">' + YOU_FACE + '</span>';
         var pct = s.status === 'working' && s.progress != null ? ' · ' + Math.round(s.progress * 100) + '%' : '';
+        if (s.status === 'working' && s.extra) pct += ' · ' + s.extra;
         return '<div class="task">' + who + '<span class="task-t"><strong>' + esc(f ? f.name : 'App') + ':</strong> ' + esc(s.label) + pct + '</span><span class="pill ' + cls + '">' + STAGE_LABEL[s.status] + '</span></div>';
       }).join('');
       var body = $('studio-body');
@@ -2326,7 +2769,16 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
         studio.shownVer = studio.resultsVer;
         $('sd-results-wrap').hidden = !studio.results.length;
         $('sd-summary').textContent = studio.summary || '';
+        if (studio.results.some(function (r) { return r.kind === 'model' && r.previewBlob; })) ensureModelViewer();
         $('sd-results').innerHTML = studio.results.map(function (r, i) {
+          if (r.kind === 'model') {
+            var view = r.previewBlob
+              ? '<model-viewer src="' + esc(r.previewBlob) + '" alt="3D model of ' + esc(r.name) + '" camera-controls auto-rotate autoplay shadow-intensity="1"' + (r.thumb ? ' poster="' + esc(r.thumb) + '"' : '') + ' style="width:100%;aspect-ratio:1;max-width:100%;background:var(--sunk);border-radius:14px"></model-viewer>'
+              : (r.thumb ? '<img class="main" alt="3D model of ' + esc(r.name) + '" src="' + esc(r.thumb) + '">' : '');
+            return '<div class="rcard">' + view + '<div class="rrow"><span class="rname">' + esc(r.name) + '</span></div>' +
+              '<div class="rbtns">' + (r.files || []).map(function (fl, k) { return '<button class="btn" type="button" data-save="' + i + ':file:' + k + '">Save ' + esc(fl.label) + '</button>'; }).join('') + '</div>' +
+              '<p class="hint">Drag to turn it around. GLB works in most game engines and viewers; FBX is for Unity, Unreal and Blender.</p></div>';
+          }
           if (r.kind === 'video') {
             return '<div class="rcard wide"><video controls playsinline src="' + esc(r.url) + '"></video><div class="rrow"><span class="rname">' + esc(r.name) + '</span></div>' +
               '<div class="rbtns"><button class="btn" type="button" data-save="' + i + ':video">Save video (.' + esc(r.ext) + ')</button></div></div>';
@@ -2515,7 +2967,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
     var thinking = {};
     state.messages.forEach(function (m) { if (m.role === 'friend' && m.pending) thinking[m.friendId] = true; });
     var sp = speaking ? speaking.fid : null;
-    var html = state.friends.map(function (f) {
+    var html = state.friends.filter(function (f) { return !isTool(f); }).map(function (f) {
       var on = sp === f.id;
       var status = on ? '<span class="tile-st">' + BARS + 'Speaking</span>'
         : thinking[f.id] ? '<span class="pill working">Thinking…</span>'
@@ -2672,7 +3124,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
     else if (t.id === 'sd-start') startStudio();
     else if (t.id === 'sd-stop') { if (studio.ctl) studio.ctl.abort(); }
     else if (t.id === 'sd-new') resetStudio();
-    else if (t.hasAttribute('data-save')) { var sv = t.getAttribute('data-save').split(':'); saveResult(Number(sv[0]), sv[1]); }
+    else if (t.hasAttribute('data-save')) { var sv = t.getAttribute('data-save').split(':'); saveResult(Number(sv[0]), sv[1], Number(sv[2])); }
+    else if (t.id === 'st-proxy-test') testProxy();
+    else if (t.id === 'ed-hg-load') loadHeygen();
     else if (t.id === 'btn-call' || t.hasAttribute('data-call')) startCall();
     else if (t.id === 'call-back' || t.id === 'call-leave') endCall();
     else if (t.id === 'call-mute') { call.muted = !call.muted; if (call.muted) stopSpeech(); renderCall(); }
@@ -2692,6 +3146,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   });
 
   window.addEventListener('resize', updateLayout);
+  ['sf-3d', 'sf-talk', 'sf-presenter'].forEach(function (id) { $(id).addEventListener('change', renderStudio); });
   $('ed-name').addEventListener('input', renderEditorBits);
   $('ed-provider').addEventListener('change', renderEditorBits);
   $('ed-remember').addEventListener('change', renderEditorBits);
