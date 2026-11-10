@@ -587,6 +587,14 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
             </select>
             <p class="hint" id="sf-m3d-hint">Uses your Meshy credits.</p>
           </div>
+          <div class="field full">
+            <label for="sf-mpoly">Triangle budget</label>
+            <select id="sf-mpoly">
+              <option value="5000">5,000 · light prop or background character</option>
+              <option value="10000" selected>10,000 · game character</option>
+              <option value="30000">30,000 · detailed showcase</option>
+            </select>
+          </div>
           <div class="field full" id="sf-manim-wrap">
             <label for="sf-manim">Animation</label>
             <input id="sf-manim" type="text" maxlength="40" value="Idle" placeholder="Idle, wave, dance, jump…">
@@ -1888,7 +1896,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
       try {
         var src = it.painted ? dataUrlParts(it.painted) : portrait;
         refUrl = await openaiImage(painter, 'Full-body 3D modeling reference of ' + it.name + '. ' + (it.sheet.look || '') +
-          '. Keep the exact same character design, colors and style as the reference image. Show the WHOLE body from head to feet, standing straight in an A-pose with arms slightly away from the body, front view, centered, plain white background, soft even lighting, no shadows, no text.',
+          '. Keep the same character design, colors and style as the reference image, except for any change the description asks for (for example removing logos or text, or recoloring a part), which you must follow. If the reference shows several views, draw only the front view. Empty open hands. Show the WHOLE body from head to feet, standing straight in an A-pose with arms slightly away from the body, front view, centered, plain white background, soft even lighting, no shadows, no text.',
           src ? b64ToBlob(src.b64, src.mime) : null);
         e.pending = false; e.text = 'Painted a full-body view for the 3D model.'; e.images = [refUrl];
       } catch (err) {
@@ -1906,7 +1914,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
     var e2 = logEntry(mesh, 'Meshy: build the 3D model', 'Sculpting and texturing. This usually takes 2–5 minutes.');
     var m = await meshyRun(mesh, '/v1/image-to-3d', {
       image_url: refUrl, ai_model: 'latest', should_texture: true, should_remesh: true,
-      topology: 'triangle', target_polycount: 30000, pose_mode: 'a-pose'
+      topology: 'triangle', target_polycount: b.poly || 30000, pose_mode: 'a-pose'
     }, '3d-model');
     var mu = m.model_urls || {};
     var thumb = null;
@@ -2645,7 +2653,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
     if (b.m3d === 'anim') setStage('3d-anim', 'Animate: ' + b.manim, mesh, 'waiting');
     setStage('3d-check', 'Check the 3D model', lead, 'waiting');
     setStage('final', 'Deliver the 3D model', lead, 'waiting');
-    var res = await make3D({ want3d: b.m3d, anim: b.manim }, it, mesh, painter, lead, pic);
+    var res = await make3D({ want3d: b.m3d, anim: b.manim, poly: b.mpoly }, it, mesh, painter, lead, pic);
     setStage('final', null, undefined, 'working');
     var parts = res.files.map(function (f) { return f.label; }).join(', ');
     studio.summary = await studioAsk(lead, 'Lead: deliver the 3D model',
@@ -2679,6 +2687,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
       modelPic: ($('sf-model-pic').files || [])[0] || null,
       m3d: $('sf-m3d').value,
       manim: $('sf-manim').value.trim() || 'Idle',
+      mpoly: Number($('sf-mpoly').value) || 10000,
       cleanup: $('sf-cleanup').checked
     };
   }
